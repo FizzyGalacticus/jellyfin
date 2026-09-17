@@ -67,6 +67,19 @@ namespace Emby.Server.Implementations.Session
         private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, string>> _activeLiveStreamSessions
             = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Tracks sessions that have lost their last active session controller (e.g. WebSocket) but are within
+        /// the grace period (see <see cref="_sessionCloseGracePeriod"/>) during which a reconnect will cancel the pending close.
+        /// This avoids tearing down a session (and any Live TV stream attached to it) on a transient socket drop.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, CancellationTokenSource> _pendingSessionCloses
+            = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// How long to wait after a session's last controller disconnects before actually closing it.
+        /// </summary>
+        private static readonly TimeSpan _sessionCloseGracePeriod = TimeSpan.FromSeconds(25);
+
         private Timer _idleTimer;
         private Timer _inactiveTimer;
 
@@ -294,6 +307,13 @@ namespace Emby.Server.Implementations.Session
         /// <inheritdoc />
         public void OnSessionControllerConnected(SessionInfo session)
         {
+            // A controller (e.g. WebSocket) reconnected for this session; cancel any pending close scheduled
+            // by CloseIfNeededAsync so a transient disconnect doesn't tear down the session.
+            if (_pendingSessionCloses.TryGetValue(session.Id, out var pendingClose))
+            {
+                pendingClose.Cancel();
+            }
+
             EventHelper.QueueEventIfNotNull(
                 SessionControllerConnected,
                 this,
@@ -305,20 +325,67 @@ namespace Emby.Server.Implementations.Session
         }
 
         /// <inheritdoc />
-        public async Task CloseIfNeededAsync(SessionInfo session)
+        public Task CloseIfNeededAsync(SessionInfo session)
         {
-            if (!session.SessionControllers.Any(i => i.IsSessionActive))
+            if (session.SessionControllers.Any(i => i.IsSessionActive))
             {
-                var key = GetSessionKey(session.Client, session.DeviceId, session.UserId);
+                return Task.CompletedTask;
+            }
 
-                _activeConnections.TryRemove(key, out _);
-                if (!string.IsNullOrEmpty(session.PlayState?.LiveStreamId))
+            // Give the client a short grace period to reconnect (e.g. after a transient WebSocket drop) before
+            // actually tearing down the session and any attached Live TV stream. A reconnect within the grace
+            // period cancels the pending close via OnSessionControllerConnected.
+            // See https://github.com/jellyfin/jellyfin/issues/18035.
+            var cts = new CancellationTokenSource();
+            var existing = _pendingSessionCloses.GetOrAdd(session.Id, cts);
+            if (!ReferenceEquals(existing, cts))
+            {
+                // A close is already pending for this session (e.g. repeated flaps of the same connection);
+                // let the existing timer own the close.
+                cts.Dispose();
+                return Task.CompletedTask;
+            }
+
+            _ = CloseAfterGracePeriodAsync(session, cts);
+            return Task.CompletedTask;
+        }
+
+        private async Task CloseAfterGracePeriodAsync(SessionInfo session, CancellationTokenSource cts)
+        {
+            try
+            {
+                await Task.Delay(_sessionCloseGracePeriod, cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // A new session controller connected in time; nothing to close.
+                return;
+            }
+            finally
+            {
+                if (_pendingSessionCloses.TryGetValue(session.Id, out var current) && ReferenceEquals(current, cts))
                 {
-                    await CloseLiveStreamIfNeededAsync(session.PlayState.LiveStreamId, session.Id).ConfigureAwait(false);
+                    _pendingSessionCloses.TryRemove(session.Id, out _);
                 }
 
-                await OnSessionEnded(session).ConfigureAwait(false);
+                cts.Dispose();
             }
+
+            if (session.SessionControllers.Any(i => i.IsSessionActive))
+            {
+                // Reconnected without going through OnSessionControllerConnected in time; bail out.
+                return;
+            }
+
+            var key = GetSessionKey(session.Client, session.DeviceId, session.UserId);
+
+            _activeConnections.TryRemove(key, out _);
+            if (!string.IsNullOrEmpty(session.PlayState?.LiveStreamId))
+            {
+                await CloseLiveStreamIfNeededAsync(session.PlayState.LiveStreamId, session.Id).ConfigureAwait(false);
+            }
+
+            await OnSessionEnded(session).ConfigureAwait(false);
         }
 
         /// <inheritdoc />
