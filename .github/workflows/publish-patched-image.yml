@@ -1,0 +1,89 @@
+name: "Publish patched Docker image"
+
+# Builds a Jellyfin server Docker image from this fork (which carries a local patch for
+# https://github.com/jellyfin/jellyfin/issues/18035 - sessions are torn down instantly on
+# WebSocket loss with no grace period) and publishes it to this account's GitHub Container
+# Registry. Manual trigger only, so nothing builds/publishes without an explicit run.
+#
+# Uses the same docker/Dockerfile build (and build-arg values) as the official
+# jellyfin/jellyfin-packaging pipeline, vendored here since this repo has no Dockerfile of
+# its own - only jellyfin-packaging does. amd64 only, matching the target server.
+
+on:
+  workflow_dispatch:
+    inputs:
+      jellyfin_web_ref:
+        description: "jellyfin-web ref/tag to build the UI from"
+        required: false
+        default: "v12.1.0"
+      image_tag:
+        description: "Extra tag to publish alongside the dated tag (e.g. 12.1.0-wsfix)"
+        required: false
+        default: "wsfix-latest"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/jellyfin
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: "Checkout patched jellyfin-server (this repo)"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: jellyfin-server
+
+      - name: "Checkout jellyfin-web"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: jellyfin/jellyfin-web
+          ref: ${{ inputs.jellyfin_web_ref || 'v12.1.0' }}
+          path: jellyfin-web
+
+      - name: "Fetch Dockerfile from jellyfin-packaging"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: jellyfin/jellyfin-packaging
+          ref: master
+          path: jellyfin-packaging
+          sparse-checkout: |
+            docker/Dockerfile
+          sparse-checkout-cone-mode: false
+
+      - name: "Set up Docker Buildx"
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: "Log in to GHCR"
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Determine version"
+        id: version
+        run: |-
+          echo "JELLYFIN_VERSION=12.1.0-wsfix.$(date +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: "Build and push"
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: jellyfin-packaging/docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            DOTNET_VERSION=10.0
+            DOTNET_ARCH=x64
+            IMAGE_ARCH=amd64
+            TARGET_ARCH=amd64
+            PACKAGE_ARCH=amd64
+            JELLYFIN_VERSION=${{ steps.version.outputs.JELLYFIN_VERSION }}
+          tags: |-
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.JELLYFIN_VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag || 'wsfix-latest' }}
