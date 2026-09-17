@@ -19,7 +19,7 @@ on:
       jellyfin_web_ref:
         description: "jellyfin-web ref/tag to build the UI from"
         required: false
-        default: "v12.1.0"
+        default: "v12.1"
       image_tag:
         description: "Extra tag to publish alongside the dated tag (e.g. 12.1.0-wsfix)"
         required: false
@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: jellyfin/jellyfin-web
-          ref: ${{ inputs.jellyfin_web_ref || 'v12.1.0' }}
+          ref: ${{ inputs.jellyfin_web_ref || 'v12.1' }}
           path: jellyfin-web
 
       - name: "Fetch Dockerfile from jellyfin-packaging"
