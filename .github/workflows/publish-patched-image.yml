@@ -84,6 +84,7 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
+            NODEJS_VERSION=24
             DOTNET_VERSION=10.0
             DOTNET_ARCH=x64
             IMAGE_ARCH=amd64
