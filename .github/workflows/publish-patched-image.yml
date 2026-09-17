@@ -12,6 +12,10 @@ name: "Publish patched Docker image"
 on:
   workflow_dispatch:
     inputs:
+      server_ref:
+        description: "Branch/tag/commit of THIS repo to build the patched server from"
+        required: false
+        default: "session-close-grace-period"
       jellyfin_web_ref:
         description: "jellyfin-web ref/tag to build the UI from"
         required: false
@@ -36,6 +40,7 @@ jobs:
       - name: "Checkout patched jellyfin-server (this repo)"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.server_ref || 'session-close-grace-period' }}
           path: jellyfin-server
 
       - name: "Checkout jellyfin-web"
