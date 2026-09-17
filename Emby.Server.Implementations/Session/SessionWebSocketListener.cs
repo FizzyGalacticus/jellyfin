@@ -33,7 +33,7 @@ namespace Emby.Server.Implementations.Session
         /// <summary>
         /// The ForceKeepAlive factor; controls when a ForceKeepAlive is sent.
         /// </summary>
-        private const float ForceKeepAliveFactor = 0.75f;
+        private const float ForceKeepAliveFactor = 0.25f;
 
         /// <summary>
         /// The WebSocket watchlist.
