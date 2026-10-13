@@ -9,29 +9,28 @@ name: "Publish patched Docker image"
 # jellyfin/jellyfin-packaging pipeline, vendored here since this repo has no Dockerfile of
 # its own - only jellyfin-packaging does. amd64 only, matching the target server.
 #
-# Runs automatically on every push to the patch branch (session-close-grace-period-master,
-# which is this fork's master with the fix commits on top), or manually via workflow_dispatch.
-# Push builds are tagged wsfix-master rather than wsfix-latest, since master is the unstable
-# 13.x line and its database migrations can't be rolled back to 12.1.
+# Runs automatically on every push to the patch branch (session-close-grace-period-12z,
+# which is upstream release-12.z with the fix commits on top), or manually via
+# workflow_dispatch.
 
 on:
   push:
     branches:
-      - session-close-grace-period-master
+      - session-close-grace-period-12z
   workflow_dispatch:
     inputs:
       server_ref:
         description: "Branch/tag/commit of THIS repo to build the patched server from"
         required: false
-        default: "session-close-grace-period-master"
+        default: "session-close-grace-period-12z"
       jellyfin_web_ref:
         description: "jellyfin-web ref/tag to build the UI from"
         required: false
-        default: "master"
+        default: "release-12.z"
       image_tag:
         description: "Extra tag to publish alongside the dated tag (e.g. wsfix-latest)"
         required: false
-        default: "wsfix-master"
+        default: "wsfix-latest"
 
 env:
   REGISTRY: ghcr.io
@@ -55,7 +54,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: jellyfin/jellyfin-web
-          ref: ${{ inputs.jellyfin_web_ref || 'master' }}
+          ref: ${{ inputs.jellyfin_web_ref || 'release-12.z' }}
           path: jellyfin-web
 
       - name: "Fetch Dockerfile from jellyfin-packaging"
@@ -102,4 +101,4 @@ jobs:
             JELLYFIN_VERSION=${{ steps.version.outputs.JELLYFIN_VERSION }}
           tags: |-
             ${{ env.REGISTRY }}/${{ steps.version.outputs.IMAGE_NAME }}:${{ steps.version.outputs.JELLYFIN_VERSION }}
-            ${{ env.REGISTRY }}/${{ steps.version.outputs.IMAGE_NAME }}:${{ inputs.image_tag || 'wsfix-master' }}
+            ${{ env.REGISTRY }}/${{ steps.version.outputs.IMAGE_NAME }}:${{ inputs.image_tag || 'wsfix-latest' }}
