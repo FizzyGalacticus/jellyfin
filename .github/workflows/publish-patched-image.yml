@@ -3,27 +3,35 @@ name: "Publish patched Docker image"
 # Builds a Jellyfin server Docker image from this fork (which carries a local patch for
 # https://github.com/jellyfin/jellyfin/issues/18035 - sessions are torn down instantly on
 # WebSocket loss with no grace period) and publishes it to this account's GitHub Container
-# Registry. Manual trigger only, so nothing builds/publishes without an explicit run.
+# Registry.
 #
 # Uses the same docker/Dockerfile build (and build-arg values) as the official
 # jellyfin/jellyfin-packaging pipeline, vendored here since this repo has no Dockerfile of
 # its own - only jellyfin-packaging does. amd64 only, matching the target server.
+#
+# Runs automatically on every push to the patch branch (session-close-grace-period-master,
+# which is this fork's master with the fix commits on top), or manually via workflow_dispatch.
+# Push builds are tagged wsfix-master rather than wsfix-latest, since master is the unstable
+# 13.x line and its database migrations can't be rolled back to 12.1.
 
 on:
+  push:
+    branches:
+      - session-close-grace-period-master
   workflow_dispatch:
     inputs:
       server_ref:
         description: "Branch/tag/commit of THIS repo to build the patched server from"
         required: false
-        default: "session-close-grace-period"
+        default: "session-close-grace-period-master"
       jellyfin_web_ref:
         description: "jellyfin-web ref/tag to build the UI from"
         required: false
-        default: "v12.1"
+        default: "master"
       image_tag:
-        description: "Extra tag to publish alongside the dated tag (e.g. 12.1.0-wsfix)"
+        description: "Extra tag to publish alongside the dated tag (e.g. wsfix-latest)"
         required: false
-        default: "wsfix-latest"
+        default: "wsfix-master"
 
 env:
   REGISTRY: ghcr.io
@@ -40,14 +48,14 @@ jobs:
       - name: "Checkout patched jellyfin-server (this repo)"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.server_ref || 'session-close-grace-period' }}
+          ref: ${{ inputs.server_ref || github.sha }}
           path: jellyfin-server
 
       - name: "Checkout jellyfin-web"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: jellyfin/jellyfin-web
-          ref: ${{ inputs.jellyfin_web_ref || 'v12.1' }}
+          ref: ${{ inputs.jellyfin_web_ref || 'master' }}
           path: jellyfin-web
 
       - name: "Fetch Dockerfile from jellyfin-packaging"
@@ -73,7 +81,8 @@ jobs:
       - name: "Determine version and image name"
         id: version
         run: |-
-          echo "JELLYFIN_VERSION=12.1.0-wsfix.$(date +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+          SERVER_VERSION="$(grep -oP 'AssemblyVersion\("\K[^"]+' jellyfin-server/SharedVersion.cs)"
+          echo "JELLYFIN_VERSION=${SERVER_VERSION}-wsfix.$(date +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
           echo "IMAGE_NAME=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: "Build and push"
@@ -93,4 +102,4 @@ jobs:
             JELLYFIN_VERSION=${{ steps.version.outputs.JELLYFIN_VERSION }}
           tags: |-
             ${{ env.REGISTRY }}/${{ steps.version.outputs.IMAGE_NAME }}:${{ steps.version.outputs.JELLYFIN_VERSION }}
-            ${{ env.REGISTRY }}/${{ steps.version.outputs.IMAGE_NAME }}:${{ inputs.image_tag || 'wsfix-latest' }}
+            ${{ env.REGISTRY }}/${{ steps.version.outputs.IMAGE_NAME }}:${{ inputs.image_tag || 'wsfix-master' }}
